@@ -1,3 +1,74 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+#define BTN 32
+int buttonState = 0;
+
+struct Habit {
+  const char* name;
+  bool done;
+};
+
+Habit habits[] = {
+  {"Take Antidepressant", false},
+  {"Take Vitamin D", false},
+  {"Take Multivitamin", false},
+  {"Exercise", false},
+  {"Stretch", false}
+};
+const int HABIT_COUNT = sizeof(habits) / sizeof(habits[0]);
+int selected = 0;
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(BTN, INPUT_PULLDOWN);
+ 
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+
+  delay(2000);
+  
+  Serial.println("SSD1306 initialized successfully");
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+  drawHabits();
+}
+ 
+void loop() {
+  buttonState = digitalRead(BTN);
+  Serial.println(buttonState);
+}
+
+void drawHabits() {
+  display.clearDisplay();
+  for (int i = 0; i < HABIT_COUNT; i++) {
+    display.setCursor(0, i * 10);
+    if (i == selected) {
+      display.print("> ");
+    } else {
+      display.print("  ");
+    }
+    display.print(habits[i].name);
+    if (habits[i].done) {
+      display.print(" [X]");
+    }
+  }
+  display.display();
+}
+
+
+
+/*
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
@@ -116,6 +187,7 @@ void setup(){
 void loop(){
   
 }
+*/
 
 /*
 #include <DHT.h>
