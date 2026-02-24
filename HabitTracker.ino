@@ -26,7 +26,9 @@ Habit habits[] = {
   {"Take Antidepressant", false},
   {"Take Vitamin D", false},
   {"Take Multivitamin", true},
-  {"Exercise extra long to test scrolling", false}
+  {"Exercise extra long to test scrolling", false},
+  {"Meditate", false},
+  {"Read", true}
 };
 AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 3, true };
 
@@ -58,9 +60,12 @@ void loop() {
 
 #define DRAW_INTERVAL 200  // ms between redraws
 #define SCROLL_GAP "   "
+#define TOP_OFFSET 6  // vertical offset to clear the yellow/blue split on the OLED
 unsigned long lastDrawn = 0;
 uint16_t rowHeight = 0;
-int scrollOffset = 0;
+int maxVisible = 0;
+int verticalScrollOffset = 0;
+int horizontalScrollOffset = 0;
 int lastSelected = -1;
 
 void setupDisplay() {
@@ -75,10 +80,12 @@ void setupDisplay() {
   uint16_t charW, charH;
   display.getTextBounds("A", 0, 0, &x1, &y1, &charW, &charH);
   rowHeight = charH + 2;  // +2px padding between rows
+
+  maxVisible = (SCREEN_HEIGHT - TOP_OFFSET) / rowHeight;
 }
 
 // returns true if the given name overflows the screen width when prefixed with the given prefix
-bool needsScroll(const String& prefix, const char* name) {
+bool needsHorizontalScroll(const String& prefix, const char* name) {
   int16_t x1, y1;
   uint16_t prefixW, prefixH, nameW, nameH;
   display.getTextBounds(prefix, 0, 0, &x1, &y1, &prefixW, &prefixH);
@@ -86,37 +93,36 @@ bool needsScroll(const String& prefix, const char* name) {
   return nameW > (SCREEN_WIDTH - prefixW);
 }
 
-String buildPrefix(int i) {
-  String prefix = "";
-  if (i == state.selected) prefix += ">";
-  else prefix += " ";
-  if (state.habits[i].done) prefix += "[X]";
-  else prefix += "[ ]";
+String buildPrefix(int habitIndex) {
+  String prefix = (habitIndex == state.selected) ? ">" : " ";
+  prefix += state.habits[habitIndex].done ? "[X] " : "[ ] ";
   return prefix;
 }
 
-// only checks if selected habit text overflows and needs scrolling.
-// other state changes (done toggle, selection change) trigger a full
-// redraw via state.dirty since they happen infrequently.
-bool selectedNeedsScroll() {
-  return needsScroll(buildPrefix(state.selected), state.habits[state.selected].name);
-}
-
-void drawHabitRow(int i) {
-  int16_t y = i * rowHeight + 6;  // +6 to clear the yellow/blue split on the OLED
+void drawHabitRow(int habitIndex, int screenRow) {
+  int16_t y = screenRow * rowHeight + TOP_OFFSET;
   display.fillRect(0, y, SCREEN_WIDTH, rowHeight, SSD1306_BLACK);
   display.setCursor(0, y);
 
-  String prefix = buildPrefix(i);
+  String prefix = buildPrefix(habitIndex);
+  String name = state.habits[habitIndex].name;
 
-  String name = state.habits[i].name;
-
-  if (i == state.selected && needsScroll(prefix, state.habits[i].name)) {
+  if (habitIndex == state.selected && needsHorizontalScroll(prefix, state.habits[habitIndex].name)) {
     String padded = name + SCROLL_GAP + name;
-    name = padded.substring(scrollOffset, scrollOffset + name.length());
+    name = padded.substring(horizontalScrollOffset, horizontalScrollOffset + name.length());
   }
 
   display.print(prefix + name);
+}
+
+void drawScrollArrows() {
+  int cx = SCREEN_WIDTH - 4;
+  // up arrow (only if scrolled down)
+  if (verticalScrollOffset > 0)
+    display.fillTriangle(cx - 3, 5, cx + 3, 5, cx, 1, SSD1306_WHITE);
+  // down arrow
+  int16_t bottom = maxVisible * rowHeight + TOP_OFFSET;
+  display.fillTriangle(cx - 3, bottom, cx + 3, bottom, cx, bottom + 4, SSD1306_WHITE);
 }
 
 void draw() {
@@ -126,32 +132,42 @@ void draw() {
 
   // reset scroll when selection changes
   if (state.selected != lastSelected) {
-    scrollOffset = 0;
+    horizontalScrollOffset = 0;
     lastSelected = state.selected;
   }
 
-  bool scrolling = selectedNeedsScroll();
+  // only checks if selected habit text overflows and needs horizontal scrolling.
+  // other state changes (done toggle, selection change) trigger a full
+  // redraw via state.dirty since they happen infrequently.
+  String selectedPrefix = buildPrefix(state.selected);
+  bool horizontalScrolling = needsHorizontalScroll(selectedPrefix, state.habits[state.selected].name);
 
-  if (!state.dirty && !scrolling) return;
+  if (!state.dirty && !horizontalScrolling) return;
 
-  // TODO: handle vertical scroll (when more habits than fit on screen)
+  // TODO: clean up vertical scroll logic
+  bool needsVerticalScroll = state.habitCount > maxVisible;
+
+  // if selected wrapped to top, reset offset
+  if (state.selected == 0) verticalScrollOffset = 0;
+  // if selected is past what's visible, offset by the overflow
+  else if (state.selected >= maxVisible + verticalScrollOffset) 
+    verticalScrollOffset = state.selected - maxVisible + 1;
 
   if (state.dirty) {
-    // redraw everything
-    for (int i = 0; i < state.habitCount; i++) {
-      drawHabitRow(i);
-    }
+    for (int screenRow = 0; screenRow < maxVisible && (screenRow + verticalScrollOffset) < state.habitCount; screenRow++)
+      drawHabitRow(verticalScrollOffset + screenRow, screenRow);
+
+    if (needsVerticalScroll) drawScrollArrows();
+
     state.dirty = false;
-  } else {
-    // only redraw the scrolling row
-    drawHabitRow(state.selected);
-  }
+  } else // only redraw the scrolling row
+    drawHabitRow(state.selected, state.selected - verticalScrollOffset);
 
   // update scroll offset for next draw if needed
-  if (scrolling) {
+  if (horizontalScrolling) {
     int nameLen = strlen(state.habits[state.selected].name);
     int wrapLen = nameLen + strlen(SCROLL_GAP);
-    scrollOffset = (scrollOffset + 1) % wrapLen;
+    horizontalScrollOffset = (horizontalScrollOffset + 1) % wrapLen;
   }
 
   display.display();
