@@ -25,11 +25,10 @@ struct AppState {
 Habit habits[] = {
   {"Take Antidepressant", false},
   {"Take Vitamin D", false},
-  {"Take Multivitamin", false},
-  {"Exercise", false},
-  {"Stretch", false}
+  {"Take Multivitamin", true},
+  {"Exercise extra long to test scrolling", false}
 };
-AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 0, true };
+AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 3, true };
 
 void setup() {
   Serial.begin(115200);
@@ -44,7 +43,6 @@ void setup() {
   
   Serial.println("SSD1306 initialized successfully");
   setupDisplay();
-  draw();
 }
 
 void loop() {
@@ -70,13 +68,16 @@ void setupDisplay() {
   display.setFont();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
+  display.setTextWrap(false);
 
+  // calculate row height based on font size (assuming all chars have same height)
   int16_t x1, y1;
   uint16_t charW, charH;
   display.getTextBounds("A", 0, 0, &x1, &y1, &charW, &charH);
   rowHeight = charH + 2;  // +2px padding between rows
 }
 
+// returns true if the given name overflows the screen width when prefixed with the given prefix
 bool needsScroll(const String& prefix, const char* name) {
   int16_t x1, y1;
   uint16_t prefixW, prefixH, nameW, nameH;
@@ -85,22 +86,27 @@ bool needsScroll(const String& prefix, const char* name) {
   return nameW > (SCREEN_WIDTH - prefixW);
 }
 
+// only checks if selected habit text overflows and needs scrolling.
+// other state changes (done toggle, selection change) trigger a full
+// redraw via state.dirty since they happen infrequently.
+bool selectedNeedsScroll() {
+  String prefix = "> ";
+  prefix += state.habits[state.selected].done ? "[X] " : "[ ] ";
+  return needsScroll(prefix, state.habits[state.selected].name);
+}
+
 void drawHabitRow(int i) {
-  display.setCursor(0, (i * rowHeight + 20));
+  int16_t y = i * rowHeight + 20;
+  display.fillRect(0, y, SCREEN_WIDTH, rowHeight, SSD1306_BLACK);
+  display.setCursor(0, y);
 
   String prefix = "";
 
-  if (i == state.selected) {
-    prefix += "> ";
-  } else {
-    prefix += "  ";
-  }
+  if (i == state.selected) prefix += "> ";
+  else prefix += "  ";
 
-  if (state.habits[i].done) {
-    prefix += "[X] ";
-  } else {
-    prefix += "[ ] ";
-  }
+  if (state.habits[i].done) prefix += "[X] ";
+  else prefix += "[ ] ";
 
   String name = state.habits[i].name;
 
@@ -114,7 +120,7 @@ void drawHabitRow(int i) {
 
 void draw() {
   unsigned long now = millis();
-  if (now - lastDrawn < DRAW_INTERVAL && !state.dirty) return;
+  if (now - lastDrawn < DRAW_INTERVAL) return;
   lastDrawn = now;
 
   // reset scroll when selection changes
@@ -123,18 +129,29 @@ void draw() {
     lastSelected = state.selected;
   }
 
-  state.dirty = false;
+  bool scrolling = selectedNeedsScroll();
 
-  // TODO: replace with per-row fillRect clears when scroll is implemented
+  if (!state.dirty && !scrolling) return;
 
-  for (int i = 0; i < state.habitCount; i++) {
-    drawHabitRow(i);
+  // TODO: handle vertical scroll (when more habits than fit on screen)
+
+  if (state.dirty) {
+    // redraw everything
+    for (int i = 0; i < state.habitCount; i++) {
+      drawHabitRow(i);
+    }
+    state.dirty = false;
+  } else {
+    // only redraw the scrolling row
+    drawHabitRow(state.selected);
   }
 
-  // advance scroll for selected habit
-  int nameLen = strlen(state.habits[state.selected].name);
-  int wrapLen = nameLen + strlen(SCROLL_GAP);
-  scrollOffset = (scrollOffset + 1) % wrapLen;
+  // update scroll offset for next draw if needed
+  if (scrolling) {
+    int nameLen = strlen(state.habits[state.selected].name);
+    int wrapLen = nameLen + strlen(SCROLL_GAP);
+    scrollOffset = (scrollOffset + 1) % wrapLen;
+  }
 
   display.display();
 }
