@@ -86,27 +86,28 @@ bool needsScroll(const String& prefix, const char* name) {
   return nameW > (SCREEN_WIDTH - prefixW);
 }
 
+String buildPrefix(int i) {
+  String prefix = "";
+  if (i == state.selected) prefix += ">";
+  else prefix += " ";
+  if (state.habits[i].done) prefix += "[X]";
+  else prefix += "[ ]";
+  return prefix;
+}
+
 // only checks if selected habit text overflows and needs scrolling.
 // other state changes (done toggle, selection change) trigger a full
 // redraw via state.dirty since they happen infrequently.
 bool selectedNeedsScroll() {
-  String prefix = "> ";
-  prefix += state.habits[state.selected].done ? "[X] " : "[ ] ";
-  return needsScroll(prefix, state.habits[state.selected].name);
+  return needsScroll(buildPrefix(state.selected), state.habits[state.selected].name);
 }
 
 void drawHabitRow(int i) {
-  int16_t y = i * rowHeight + 20;
+  int16_t y = i * rowHeight + 6;  // +6 to clear the yellow/blue split on the OLED
   display.fillRect(0, y, SCREEN_WIDTH, rowHeight, SSD1306_BLACK);
   display.setCursor(0, y);
 
-  String prefix = "";
-
-  if (i == state.selected) prefix += "> ";
-  else prefix += "  ";
-
-  if (state.habits[i].done) prefix += "[X] ";
-  else prefix += "[ ] ";
+  String prefix = buildPrefix(i);
 
   String name = state.habits[i].name;
 
