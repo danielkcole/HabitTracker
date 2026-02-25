@@ -39,6 +39,9 @@ unsigned long lastDebounceTime[3] = { 0, 0, 0 };
 // =====================
 // DATA
 // =====================
+
+#define RESET_AFTER_MS (15UL * 60 * 60 * 1000)  // 15 hours in milliseconds
+
 struct Habit {
   const char* name;
   bool done;
@@ -49,17 +52,16 @@ struct AppState {
   int habitCount;
   int selected;
   bool dirty;
+  unsigned long firstDoneAt;  // millis() when first habit was marked done; 0 = not started
 };
 
 Habit habits[] = {
   {"Take Antidepressant", false},
   {"Take Vitamin D", false},
   {"Take Multivitamin", false},
-  {"Exercise extra long to test scrolling", false},
-  {"Meditate", false},
-  {"Read", false}
+  {"Nose Spray", false}
 };
-AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 3, true };
+AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 0, true, 0 };
 
 void setup() {
   Serial.begin(115200);
@@ -77,22 +79,36 @@ void setup() {
   setupDisplay();
 }
 
-void loop() {
-  int buttonIndex = readButtons();
+void resetHabits() {
+  for (int i = 0; i < state.habitCount; i++)
+    state.habits[i].done = false;
+  state.firstDoneAt = 0;
+  state.dirty = true;
+}
+
+void handleInput(int buttonIndex) {
   if (buttonIndex == 0) // UP
     state.selected = (state.selected - 1 + state.habitCount) % state.habitCount;
   else if (buttonIndex == 1) // DOWN
     state.selected = (state.selected + 1) % state.habitCount;
-  else if (buttonIndex == 2) // SELECT
-    state.habits[state.selected].done = !state.habits[state.selected].done;
+  else if (buttonIndex == 2) { // SELECT
+    bool wasDone = state.habits[state.selected].done;
+    state.habits[state.selected].done = !wasDone;
+    // start the reset timer on the first habit marked done
+    if (!wasDone && state.firstDoneAt == 0)
+      state.firstDoneAt = millis();
+  }
 
   if (buttonIndex != -1)
     state.dirty = true;
+}
 
-  // TODO: reset all "done" states
-  // - long press SELECT to manually reset (swap to OneButton library for long press support)
-  // - auto-reset on a timer: 15 hours after first habit marked done,
-  //   which should reliably land overnight regardless of when you start
+void loop() {
+  handleInput(readButtons());
+
+  // auto-reset 15 hours after first habit is marked done
+  if (state.firstDoneAt != 0 && (millis() - state.firstDoneAt) >= RESET_AFTER_MS)
+    resetHabits();
 
   draw();
 }
