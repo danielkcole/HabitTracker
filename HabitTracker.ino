@@ -2,14 +2,43 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
+// =====================
+// DISPLAY
+// =====================
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
+#define DRAW_INTERVAL 200  // ms between redraws
+#define SCROLL_GAP "   "
+#define TOP_OFFSET 6  // vertical offset to clear the yellow/blue split on the OLED
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-#define BTN 32
-int buttonState = 0;
+unsigned long lastDrawn = 0;
+uint16_t rowHeight = 0;
+int maxVisible = 0;
+int verticalScrollOffset = 0;
+int horizontalScrollOffset = 0;
+int lastSelected = -1;
 
+// =====================
+// INPUT
+// =====================
+#define BTN_UP     33
+#define BTN_DOWN   32
+#define BTN_SELECT 27
+
+const int buttonPins[] = { BTN_UP, BTN_DOWN, BTN_SELECT };
+const int buttonCount = sizeof(buttonPins) / sizeof(buttonPins[0]);
+
+#define DEBOUNCE_MS 100
+
+int  buttonStates[3]        = { LOW, LOW, LOW };
+int  lastReading[3]         = { LOW, LOW, LOW };
+unsigned long lastDebounceTime[3] = { 0, 0, 0 };
+
+// =====================
+// DATA
+// =====================
 struct Habit {
   const char* name;
   bool done;
@@ -25,16 +54,17 @@ struct AppState {
 Habit habits[] = {
   {"Take Antidepressant", false},
   {"Take Vitamin D", false},
-  {"Take Multivitamin", true},
+  {"Take Multivitamin", false},
   {"Exercise extra long to test scrolling", false},
   {"Meditate", false},
-  {"Read", true}
+  {"Read", false}
 };
 AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 3, true };
 
 void setup() {
   Serial.begin(115200);
-  pinMode(BTN, INPUT_PULLDOWN);
+  for (int i = 0; i < buttonCount; i++)
+    pinMode(buttonPins[i], INPUT_PULLDOWN);
  
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println(F("SSD1306 allocation failed"));
@@ -48,25 +78,54 @@ void setup() {
 }
 
 void loop() {
-  buttonState = digitalRead(BTN);
-  Serial.println(buttonState);
+  int buttonIndex = readButtons();
+  if (buttonIndex == 0) // UP
+    state.selected = (state.selected - 1 + state.habitCount) % state.habitCount;
+  else if (buttonIndex == 1) // DOWN
+    state.selected = (state.selected + 1) % state.habitCount;
+  else if (buttonIndex == 2) // SELECT
+    state.habits[state.selected].done = !state.habits[state.selected].done;
+
+  if (buttonIndex != -1)
+    state.dirty = true;
+
+  // TODO: reset all "done" states
+  // - long press SELECT to manually reset (swap to OneButton library for long press support)
+  // - auto-reset on a timer: 15 hours after first habit marked done,
+  //   which should reliably land overnight regardless of when you start
 
   draw();
 }
 
-// =====================
-// DISPLAY
-// =====================
+// Returns index into buttonPins[] of a button that was just pressed, or -1 if none.
+// "just pressed" = rising edge (LOW -> HIGH) after debounce settles.
+// polling is fine here — loop already runs constantly for display updates,
+// and human input is slow compared to the loop rate.
+int readButtons() {
+  unsigned long now = millis();
 
-#define DRAW_INTERVAL 200  // ms between redraws
-#define SCROLL_GAP "   "
-#define TOP_OFFSET 6  // vertical offset to clear the yellow/blue split on the OLED
-unsigned long lastDrawn = 0;
-uint16_t rowHeight = 0;
-int maxVisible = 0;
-int verticalScrollOffset = 0;
-int horizontalScrollOffset = 0;
-int lastSelected = -1;
+  for (int i = 0; i < buttonCount; i++) {
+    int reading = digitalRead(buttonPins[i]);
+
+    // if the raw reading changed, restart the debounce timer
+    if (reading != lastReading[i]) {
+      lastDebounceTime[i] = now;
+      lastReading[i] = reading;
+    }
+
+    // if the reading has been stable long enough, trust it
+    if ((now - lastDebounceTime[i]) >= DEBOUNCE_MS) {
+      // detect rising edge: was LOW, now HIGH
+      if (reading == HIGH && buttonStates[i] == LOW) {
+        buttonStates[i] = HIGH;
+        return i;
+      }
+      buttonStates[i] = reading;
+    }
+  }
+
+  return -1;
+}
 
 void setupDisplay() {
   display.clearDisplay();
@@ -293,32 +352,5 @@ void setup(){
  
 void loop(){
   
-}
-*/
-
-/*
-#include <DHT.h>
-
-#define DHTPIN 27
-#define DHTTYPE DHT11
-
-DHT dht(DHTPIN, DHTTYPE);
-
-void setup() {
-  Serial.begin(115200);
-  dht.begin();
-}
-
-void loop() {
-  float t = dht.readTemperature();
-  float h = dht.readHumidity();
-
-  Serial.print("Temp: ");
-  Serial.println(t);
-
-  Serial.print("Humidity: ");
-  Serial.println(h);
-
-  delay(2000);
 }
 */
