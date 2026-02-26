@@ -127,6 +127,7 @@ void setup() {
   verticalScrollOffset = 0;
   lastSelected = -1;
   setupDisplay();
+  // TODO: habits don't render until after WiFi — draw should happen before setupWifi blocks
   lastInteractionAt = millis();
   if (setupWifi(wifiStartedAt))
     setupServer();
