@@ -1,6 +1,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <OneButton.h>
 #include <time.h>
 
 // =====================
@@ -31,25 +32,24 @@ int lastSelected = -1;
 #define BTN_UP     33
 #define BTN_DOWN   32
 #define BTN_SELECT 27
-#define DEBOUNCE_MS 100
-#define WAKE_PIN_MASK ((1ULL << BTN_UP) | (1ULL << BTN_DOWN) | (1ULL << BTN_SELECT)) // bitmask for EXT1 wakeup — each bit corresponds to a GPIO number, any HIGH pin wakes the device
 #define SLEEP_TIMEOUT_MS (30 * 1000)  // 30 seconds of inactivity before sleep
+#define LONG_PRESS_MS 2000            // hold duration to trigger a long press action
 
-unsigned long lastInteractionAt = 0;
-const int buttonPins[] = { BTN_UP, BTN_DOWN, BTN_SELECT };
-const int buttonCount = sizeof(buttonPins) / sizeof(buttonPins[0]);
+unsigned long lastInteractionAt = 0;  // regular RAM — intentionally resets to 0 on each wake
 
-int  buttonStates[3]          = { LOW, LOW, LOW };
-int  lastReading[3]           = { LOW, LOW, LOW };
-unsigned long lastDebounceTime[3] = { 0, 0, 0 };
+OneButton btnUp(BTN_UP);
+OneButton btnDown(BTN_DOWN);
+OneButton btnSelect(BTN_SELECT);
 
 // ---------------------
 // Data
 // ---------------------
-#define RESET_AFTER_SEC (15UL * 60 * 60)  // 15 hours in seconds
+#define RESET_AFTER_SEC    (15UL * 60 * 60)  // 15 hours in seconds
+#define MAX_HABIT_NAME_LEN 32
+#define MAX_HABITS         10
 
 struct Habit {
-  const char* name;
+  char name[MAX_HABIT_NAME_LEN];
   bool done;
 };
 
@@ -59,16 +59,16 @@ struct AppState {
   int selected;
   bool dirty;
   time_t firstDoneAt;  // RTC timestamp when first habit was marked done; 0 = not started
-  bool initialized;           // false on first boot, true after — survives deep sleep
+  bool initialized;    // false on first boot, true after — survives deep sleep
 };
 
-RTC_DATA_ATTR Habit habits[] = {
+RTC_DATA_ATTR Habit habits[MAX_HABITS] = {
   {"Take Antidepressant", false},
   {"Take Vitamin D", false},
   {"Take Multivitamin", false},
   {"Nose Spray", false}
 };
-RTC_DATA_ATTR AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 0, true, 0, false };
+RTC_DATA_ATTR AppState state = { habits, 4, 0, true, 0, false };
 
 // =====================
 // METHODS
@@ -76,8 +76,21 @@ RTC_DATA_ATTR AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 0, 
 
 void setup() {
   Serial.begin(115200);
-  for (int i = 0; i < buttonCount; i++)
-    pinMode(buttonPins[i], INPUT_PULLDOWN);
+
+  pinMode(BTN_UP,     INPUT_PULLUP);
+  pinMode(BTN_DOWN,   INPUT_PULLUP);
+  pinMode(BTN_SELECT, INPUT_PULLUP);
+
+  // if waking from deep sleep, SELECT is still physically held down — wait for release
+  // before attaching callbacks so the wake press isn't processed as a click
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0)
+    while (digitalRead(BTN_SELECT) == LOW) {}
+
+  btnUp.attachClick(onUpClick);
+  btnDown.attachClick(onDownClick);
+  btnSelect.attachClick(onSelectClick);
+  btnSelect.attachLongPressStart(onSelectLongPress);
+  btnSelect.setPressTicks(LONG_PRESS_MS);
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println(F("SSD1306 allocation failed"));
@@ -96,7 +109,9 @@ void setup() {
 }
 
 void loop() {
-  handleInput(readButtons());
+  btnUp.tick();
+  btnDown.tick();
+  btnSelect.tick();
 
   // auto-reset 15 hours after first habit is marked done
   if (state.firstDoneAt != 0 && (time(nullptr) - state.firstDoneAt) >= RESET_AFTER_SEC)
@@ -112,58 +127,37 @@ void loop() {
 // Input
 // ---------------------
 
-// Returns index into buttonPins[] of a button that was just pressed, or -1 if none.
-// "just pressed" = rising edge (LOW -> HIGH) after debounce settles.
-// polling is fine here — loop already runs constantly for display updates,
-// and human input is slow compared to the loop rate.
-int readButtons() {
-  unsigned long now = millis();
-
-  for (int i = 0; i < buttonCount; i++) {
-    int reading = digitalRead(buttonPins[i]);
-
-    // if the raw reading changed, restart the debounce timer
-    if (reading != lastReading[i]) {
-      lastDebounceTime[i] = now;
-      lastReading[i] = reading;
-    }
-
-    // if the reading has been stable long enough, trust it
-    if ((now - lastDebounceTime[i]) >= DEBOUNCE_MS) {
-      // detect rising edge: was LOW, now HIGH
-      if (reading == HIGH && buttonStates[i] == LOW) {
-        buttonStates[i] = HIGH;
-        return i;
-      }
-      buttonStates[i] = reading;
-    }
-  }
-
-  return -1;
+void onUpClick() {
+  state.selected = (state.selected - 1 + state.habitCount) % state.habitCount;
+  state.dirty = true;
+  lastInteractionAt = millis();
 }
 
-void handleInput(int buttonIndex) {
-  if (buttonIndex == 0) // UP
-    state.selected = (state.selected - 1 + state.habitCount) % state.habitCount;
-  else if (buttonIndex == 1) // DOWN
-    state.selected = (state.selected + 1) % state.habitCount;
-  else if (buttonIndex == 2) { // SELECT
-    bool wasDone = state.habits[state.selected].done;
-    state.habits[state.selected].done = !wasDone;
-    // start the reset timer on the first habit marked done
-    if (!wasDone && state.firstDoneAt == 0)
-      state.firstDoneAt = time(nullptr);
-  }
+void onDownClick() {
+  state.selected = (state.selected + 1) % state.habitCount;
+  state.dirty = true;
+  lastInteractionAt = millis();
+}
 
-  if (buttonIndex != -1) {
-    state.dirty = true;
-    lastInteractionAt = millis();
-  }
+void onSelectClick() {
+  bool wasDone = state.habits[state.selected].done;
+  state.habits[state.selected].done = !wasDone;
+  if (!wasDone && state.firstDoneAt == 0)
+    state.firstDoneAt = time(nullptr);
+  // TODO: if all habits are now done, play a fireworks/celebration animation
+  state.dirty = true;
+  lastInteractionAt = millis();
+}
+
+void onSelectLongPress() {
+  resetHabits();
+  lastInteractionAt = millis();
 }
 
 void goToSleep() {
   display.ssd1306_command(SSD1306_DISPLAYOFF);
-  esp_sleep_enable_ext1_wakeup(WAKE_PIN_MASK, ESP_EXT1_WAKEUP_ANY_HIGH);
+  // EXT0 watches a single pin — SELECT is the wake button (active LOW, wired with INPUT_PULLUP)
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, LOW);
   esp_deep_sleep_start();
 }
 
