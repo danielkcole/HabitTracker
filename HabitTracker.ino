@@ -3,8 +3,12 @@
 #include <Adafruit_SSD1306.h>
 
 // =====================
-// DISPLAY
+// VARIABLES
 // =====================
+
+// ---------------------
+// Display
+// ---------------------
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define DRAW_INTERVAL 200  // ms between redraws
@@ -20,26 +24,24 @@ int verticalScrollOffset = 0;
 int horizontalScrollOffset = 0;
 int lastSelected = -1;
 
-// =====================
-// INPUT
-// =====================
+// ---------------------
+// Input
+// ---------------------
 #define BTN_UP     33
 #define BTN_DOWN   32
 #define BTN_SELECT 27
+#define DEBOUNCE_MS 100
 
 const int buttonPins[] = { BTN_UP, BTN_DOWN, BTN_SELECT };
 const int buttonCount = sizeof(buttonPins) / sizeof(buttonPins[0]);
 
-#define DEBOUNCE_MS 100
-
-int  buttonStates[3]        = { LOW, LOW, LOW };
-int  lastReading[3]         = { LOW, LOW, LOW };
+int  buttonStates[3]          = { LOW, LOW, LOW };
+int  lastReading[3]           = { LOW, LOW, LOW };
 unsigned long lastDebounceTime[3] = { 0, 0, 0 };
 
-// =====================
-// DATA
-// =====================
-
+// ---------------------
+// Data
+// ---------------------
 #define RESET_AFTER_MS (15UL * 60 * 60 * 1000)  // 15 hours in milliseconds
 
 struct Habit {
@@ -63,44 +65,24 @@ Habit habits[] = {
 };
 AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 0, true, 0 };
 
+// =====================
+// METHODS
+// =====================
+
 void setup() {
   Serial.begin(115200);
   for (int i = 0; i < buttonCount; i++)
     pinMode(buttonPins[i], INPUT_PULLDOWN);
- 
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println(F("SSD1306 allocation failed"));
-    for(;;);
+    for (;;);
   }
 
   delay(2000);
-  
+
   Serial.println("SSD1306 initialized successfully");
   setupDisplay();
-}
-
-void resetHabits() {
-  for (int i = 0; i < state.habitCount; i++)
-    state.habits[i].done = false;
-  state.firstDoneAt = 0;
-  state.dirty = true;
-}
-
-void handleInput(int buttonIndex) {
-  if (buttonIndex == 0) // UP
-    state.selected = (state.selected - 1 + state.habitCount) % state.habitCount;
-  else if (buttonIndex == 1) // DOWN
-    state.selected = (state.selected + 1) % state.habitCount;
-  else if (buttonIndex == 2) { // SELECT
-    bool wasDone = state.habits[state.selected].done;
-    state.habits[state.selected].done = !wasDone;
-    // start the reset timer on the first habit marked done
-    if (!wasDone && state.firstDoneAt == 0)
-      state.firstDoneAt = millis();
-  }
-
-  if (buttonIndex != -1)
-    state.dirty = true;
 }
 
 void loop() {
@@ -112,6 +94,10 @@ void loop() {
 
   draw();
 }
+
+// ---------------------
+// Input
+// ---------------------
 
 // Returns index into buttonPins[] of a button that was just pressed, or -1 if none.
 // "just pressed" = rising edge (LOW -> HIGH) after debounce settles.
@@ -142,6 +128,27 @@ int readButtons() {
 
   return -1;
 }
+
+void handleInput(int buttonIndex) {
+  if (buttonIndex == 0) // UP
+    state.selected = (state.selected - 1 + state.habitCount) % state.habitCount;
+  else if (buttonIndex == 1) // DOWN
+    state.selected = (state.selected + 1) % state.habitCount;
+  else if (buttonIndex == 2) { // SELECT
+    bool wasDone = state.habits[state.selected].done;
+    state.habits[state.selected].done = !wasDone;
+    // start the reset timer on the first habit marked done
+    if (!wasDone && state.firstDoneAt == 0)
+      state.firstDoneAt = millis();
+  }
+
+  if (buttonIndex != -1)
+    state.dirty = true;
+}
+
+// ---------------------
+// Display
+// ---------------------
 
 void setupDisplay() {
   display.clearDisplay();
@@ -225,7 +232,7 @@ void draw() {
   // if selected wrapped to top, reset offset
   if (state.selected == 0) verticalScrollOffset = 0;
   // if selected is past what's visible, offset by the overflow
-  else if (state.selected >= maxVisible + verticalScrollOffset) 
+  else if (state.selected >= maxVisible + verticalScrollOffset)
     verticalScrollOffset = state.selected - maxVisible + 1;
 
   if (state.dirty) {
@@ -248,125 +255,13 @@ void draw() {
   display.display();
 }
 
+// ---------------------
+// State
+// ---------------------
 
-
-/*
-#include <WiFi.h>
-#include <ESPAsyncWebServer.h>
-#include <AsyncTCP.h>
-#include <FS.h>
-#include <LittleFS.h>
-#include <Wire.h>
-#include <DHT.h>
-
-#define DHTPIN 27
-#define DHTTYPE DHT11
-
-DHT dht(DHTPIN, DHTTYPE);
-
-const char* ssid = "0.0_WeeWeeWeeFi";
-const char* password = "georgeandlaura";
-
-// Set LED GPIO
-const int ledPin = 2;
-// Stores LED state
-String ledState;
-
-// Create AsyncWebServer object on port 80
-AsyncWebServer server(80);
-
-String getTemperature() {
-  float temperature = dht.readTemperature();
-  Serial.println(temperature);
-  return String(temperature);
+void resetHabits() {
+  for (int i = 0; i < state.habitCount; i++)
+    state.habits[i].done = false;
+  state.firstDoneAt = 0;
+  state.dirty = true;
 }
-  
-String getHumidity() {
-  float humidity = dht.readHumidity();
-  Serial.println(humidity);
-  return String(humidity);
-}
-
-// Replaces placeholder with LED state value
-String processor(const String& var){
-  Serial.println(var);
-  if(var == "STATE"){
-    if(digitalRead(ledPin)){
-      ledState = "ON";
-    }
-    else{
-      ledState = "OFF";
-    }
-    Serial.println(ledState);
-    return ledState;
-  }
-  else if (var == "TEMPERATURE"){
-    return getTemperature();
-  }
-  else if (var == "HUMIDITY"){
-    return getHumidity();
-  }
-  return String();
-}
- 
-void setup(){
-  // Serial port for debugging purposes
-  Serial.begin(115200);
-  pinMode(ledPin, OUTPUT);
-
-  dht.begin();
-
-  // Initialize LittleFS
-  if(!LittleFS.begin()){
-    Serial.println("An Error has occurred while mounting LittleFS");
-    return;
-  }
-
-  // Connect to Wi-Fi
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println("Connecting to WiFi..");
-  }
-
-  // Print ESP32 Local IP Address
-  Serial.println(WiFi.localIP());
-
-  // Route for root / web page
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(LittleFS, "/index.html", String(), false, processor);
-  });
-  
-  // Route to load style.css file
-  server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(LittleFS, "/style.css", "text/css");
-  });
-
-  // Route to set GPIO to HIGH
-  server.on("/on", HTTP_GET, [](AsyncWebServerRequest *request){
-    digitalWrite(ledPin, HIGH);    
-    request->send(LittleFS, "/index.html", String(), false, processor);
-  });
-  
-  // Route to set GPIO to LOW
-  server.on("/off", HTTP_GET, [](AsyncWebServerRequest *request){
-    digitalWrite(ledPin, LOW);    
-    request->send(LittleFS, "/index.html", String(), false, processor);
-  });
-
-  server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "text/plain", getTemperature().c_str());
-  });
-  
-  server.on("/humidity", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "text/plain", getHumidity().c_str());
-  });
-
-  // Start server
-  server.begin();
-}
- 
-void loop(){
-  
-}
-*/
