@@ -1,62 +1,118 @@
 <!DOCTYPE html>
-<!-- 
-  Rui Santos & Sara Santos - Random Nerd Tutorials
-  Complete project details at https://RandomNerdTutorials.com/esp32-web-server-littlefs/ 
--->
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>ESP32 LittleFS Web Server</title>
+  <title>Habit Tracker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>ESP32 LittleFS Web Server</h1>
+  <h1>Habit Tracker</h1>
+  <ul id="habit-list"></ul>
+  <div class="add-row">
+    <input type="text" id="new-habit" placeholder="New habit name" maxlength="31">
+    <button id="add-btn">Add</button>
+  </div>
+  <button id="save-btn">Save</button>
+  <p id="status"></p>
 
-  <p>💡 GPIO state<strong> %STATE%</strong></p>
+  <script>
+    let habits = [];
 
-  <p>
-    <a href="/on"><button class="button">ON</button></a>
-    <a href="/off"><button class="button button2">OFF</button></a>
-  </p>
+    async function loadHabits() {
+      const res = await fetch('/habits');
+      habits = await res.json();
+      renderList();
+    }
 
-  <p>
-    <span class="sensor-labels">🌡️ Temperature</span>
-    <span id="temperature">%TEMPERATURE%</span>
-    <sup class="units">&deg;C</sup>
-  </p>
+    function renderList() {
+      const ul = document.getElementById('habit-list');
+      ul.innerHTML = '';
+      habits.forEach((name, i) => {
+        const li = document.createElement('li');
 
-  <p>
-    <span class="sensor-labels">💧 Humidity</span>
-    <span id="humidity">%HUMIDITY%</span>
-    <sup class="units">&#37;</sup>
-  </p>
-</body>
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = name;
+        input.maxLength = 31;
+        input.addEventListener('change', e => { habits[i] = e.target.value.trim(); });
 
-<script>
-  const updateSensorValue = (id, endpoint) => {
-    fetch(endpoint)
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`Failed to fetch ${endpoint}`);
-        }
-        return response.text();
-      })
-      .then(data => {
-        document.getElementById(id).textContent = data;
-      })
-      .catch(error => {
-        console.error(error);
-        document.getElementById(id).textContent = 'Error';
+        const controls = document.createElement('div');
+        controls.className = 'controls';
+
+        const upBtn = document.createElement('button');
+        upBtn.textContent = '↑';
+        upBtn.addEventListener('click', () => { moveUp(i); });
+
+        const downBtn = document.createElement('button');
+        downBtn.textContent = '↓';
+        downBtn.addEventListener('click', () => { moveDown(i); });
+
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '✕';
+        delBtn.className = 'delete';
+        delBtn.addEventListener('click', () => { removeHabit(i); });
+
+        controls.append(upBtn, downBtn, delBtn);
+        li.append(input, controls);
+        ul.appendChild(li);
       });
-  };
+    }
 
-  // Update all sensors every 10 seconds
-  setInterval(() => {
-    updateSensorValue('temperature', '/temperature');
-    updateSensorValue('humidity', '/humidity');
-  }, 10000);
-  
-</script>
+    function addHabit() {
+      const input = document.getElementById('new-habit');
+      const name = input.value.trim();
+      if (!name) return;
+      if (habits.length >= 10) { showStatus('Maximum 10 habits', 'error'); return; }
+      habits.push(name);
+      input.value = '';
+      renderList();
+    }
+
+    function removeHabit(i) {
+      habits.splice(i, 1);
+      renderList();
+    }
+
+    function moveUp(i) {
+      if (i === 0) return;
+      [habits[i - 1], habits[i]] = [habits[i], habits[i - 1]];
+      renderList();
+    }
+
+    function moveDown(i) {
+      if (i === habits.length - 1) return;
+      [habits[i + 1], habits[i]] = [habits[i], habits[i + 1]];
+      renderList();
+    }
+
+    async function saveHabits() {
+      const res = await fetch('/habits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(habits)
+      });
+      showStatus(res.ok ? 'Saved!' : 'Save failed', res.ok ? 'success' : 'error');
+    }
+
+    function showStatus(msg, cls) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = cls;
+      setTimeout(() => { el.textContent = ''; el.className = ''; }, 3000);
+    }
+
+    document.getElementById('add-btn').addEventListener('click', addHabit);
+    document.getElementById('save-btn').addEventListener('click', saveHabits);
+    document.getElementById('new-habit').addEventListener('keydown', e => {
+      if (e.key === 'Enter') addHabit();
+    });
+
+    // keep device awake while page is open
+    setInterval(() => fetch('/ping'), 20000);
+
+    loadHabits();
+  </script>
+</body>
 </html>

@@ -3,6 +3,10 @@
 #include <Adafruit_SSD1306.h>
 #include <OneButton.h>
 #include <time.h>
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <LittleFS.h>
+#include <ArduinoJson.h>
 
 // =====================
 // VARIABLES
@@ -42,6 +46,15 @@ OneButton btnDown(BTN_DOWN);
 OneButton btnSelect(BTN_SELECT);
 
 // ---------------------
+// WiFi
+// ---------------------
+#define WIFI_SSID        "ATAT-FTW"
+#define WIFI_PASSWORD    "MFS131313"
+#define WIFI_TIMEOUT_MS  10000
+
+AsyncWebServer server(80);
+
+// ---------------------
 // Data
 // ---------------------
 #define RESET_AFTER_SEC    (15UL * 60 * 60)  // 15 hours in seconds
@@ -75,7 +88,12 @@ RTC_DATA_ATTR AppState state = { habits, 4, 0, true, 0, false };
 // =====================
 
 void setup() {
+  delay(50);  // let ROM bootloader output finish before opening serial
   Serial.begin(115200);
+
+  // start WiFi immediately so it connects in the background while the rest of setup runs
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  unsigned long wifiStartedAt = millis();
 
   pinMode(BTN_UP,     INPUT_PULLUP);
   pinMode(BTN_DOWN,   INPUT_PULLUP);
@@ -98,14 +116,20 @@ void setup() {
   }
 
   if (!state.initialized) {
-    delay(2000);  // give the display time to stabilize on first boot
+    delay(100);  // brief settle time after display.begin() on first boot
     Serial.println("SSD1306 initialized successfully");
+    loadHabitsFromFlash();  // load saved habit names from LittleFS, falls back to hardcoded defaults
     state.initialized = true;
   }
 
   state.dirty = true;  // force full redraw on both first boot and wake
+  horizontalScrollOffset = 0;
+  verticalScrollOffset = 0;
+  lastSelected = -1;
   setupDisplay();
   lastInteractionAt = millis();
+  if (setupWifi(wifiStartedAt))
+    setupServer();
 }
 
 void loop() {
@@ -167,6 +191,7 @@ void goToSleep() {
 
 void setupDisplay() {
   display.clearDisplay();
+  display.display();  // push blank to screen immediately so stale OLED content doesn't linger
   display.setFont();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
@@ -251,6 +276,7 @@ void draw() {
     verticalScrollOffset = state.selected - maxVisible + 1;
 
   if (state.dirty) {
+    display.clearDisplay();
     for (int screenRow = 0; screenRow < maxVisible && (screenRow + verticalScrollOffset) < state.habitCount; screenRow++)
       drawHabitRow(verticalScrollOffset + screenRow, screenRow);
 
@@ -271,8 +297,136 @@ void draw() {
 }
 
 // ---------------------
+// WiFi
+// ---------------------
+
+void setupServer() {
+  if (!LittleFS.begin()) {
+    Serial.println("LittleFS mount failed — web UI unavailable");
+    return;
+  }
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(LittleFS, "/index.html", "text/html");
+  });
+
+  server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(LittleFS, "/style.css", "text/css");
+  });
+
+  // keeps the device awake while the page is open (browser pings every 20s)
+  server.on("/ping", HTTP_GET, [](AsyncWebServerRequest *request) {
+    lastInteractionAt = millis();
+    request->send(200);
+  });
+
+  server.on("/habits", HTTP_GET, [](AsyncWebServerRequest *request) {
+    lastInteractionAt = millis();
+    DynamicJsonDocument doc(1024);
+    JsonArray arr = doc.to<JsonArray>();
+    for (int i = 0; i < state.habitCount; i++)
+      arr.add(state.habits[i].name);
+    String json;
+    serializeJson(doc, json);
+    request->send(200, "application/json", json);
+  });
+
+  server.on("/habits", HTTP_POST,
+    [](AsyncWebServerRequest *request) {},
+    NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+      lastInteractionAt = millis();
+      DynamicJsonDocument doc(1024);
+      if (deserializeJson(doc, data, len)) {
+        request->send(400, "text/plain", "Invalid JSON");
+        return;
+      }
+
+      JsonArray arr = doc.as<JsonArray>();
+      int newCount = min((int)arr.size(), MAX_HABITS);
+
+      // check if anything actually changed before touching RAM or flash
+      bool changed = (newCount != state.habitCount);
+      if (!changed) {
+        for (int i = 0; i < newCount; i++) {
+          if (strcmp(habits[i].name, arr[i].as<const char*>()) != 0) { changed = true; break; }
+        }
+      }
+      if (!changed) { request->send(200, "text/plain", "OK"); return; }
+
+      // update RTC RAM with the new habit list
+      for (int i = 0; i < newCount; i++) {
+        strncpy(habits[i].name, arr[i].as<const char*>(), MAX_HABIT_NAME_LEN - 1);
+        habits[i].name[MAX_HABIT_NAME_LEN - 1] = '\0';
+        habits[i].done = false;
+      }
+      state.habitCount = newCount;
+      if (state.selected >= newCount) state.selected = max(0, newCount - 1);
+      state.dirty = true;
+
+      // persist the updated RAM state to flash so it survives power loss
+      saveHabitsToFlash();
+      request->send(200, "text/plain", "OK");
+    }
+  );
+
+  server.begin();
+  Serial.println("Web server started");
+}
+
+bool setupWifi(unsigned long startedAt) {
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED && millis() - startedAt < WIFI_TIMEOUT_MS) {
+    delay(100);
+    Serial.print(".");
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("\nWiFi connected: ");
+    Serial.println(WiFi.localIP());
+    return true;
+  } else {
+    Serial.println("\nWiFi connection failed — running without web UI");
+    return false;
+  }
+}
+
+// ---------------------
 // State
 // ---------------------
+
+void loadHabitsFromFlash() {
+  if (!LittleFS.begin()) return;
+  File f = LittleFS.open("/habits.json", "r");
+  if (!f) return;  // no saved file yet — keep hardcoded defaults
+
+  DynamicJsonDocument doc(1024);
+  if (deserializeJson(doc, f)) { f.close(); return; }  // malformed — keep defaults
+  f.close();
+
+  JsonArray arr = doc.as<JsonArray>();
+  int count = min((int)arr.size(), MAX_HABITS);
+  for (int i = 0; i < count; i++) {
+    strncpy(habits[i].name, arr[i].as<const char*>(), MAX_HABIT_NAME_LEN - 1);
+    habits[i].name[MAX_HABIT_NAME_LEN - 1] = '\0';
+    habits[i].done = false;
+  }
+  state.habitCount = count;
+  Serial.println("Habits loaded from LittleFS");
+}
+
+void saveHabitsToFlash() {
+  File f = LittleFS.open("/habits.json", "w");
+  if (!f) return;
+
+  DynamicJsonDocument doc(1024);
+  JsonArray arr = doc.to<JsonArray>();
+  for (int i = 0; i < state.habitCount; i++)
+    arr.add(habits[i].name);
+
+  serializeJson(doc, f);
+  f.close();
+  Serial.println("Habits saved to LittleFS");
+}
 
 void resetHabits() {
   for (int i = 0; i < state.habitCount; i++)

@@ -1,68 +1,134 @@
-/***
-  Rui Santos & Sara Santos - Random Nerd Tutorials
-  Complete project details at https://RandomNerdTutorials.com/esp32-web-server-littlefs/ 
-***/
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
-html {
-  font-family: Arial;
-  display: inline-block;
-  margin: 0 auto;
-  text-align: center;
-  background-color: #f4f4f4;
+body {
+  font-family: Arial, sans-serif;
+  background: #f4f4f4;
   color: #333;
+  padding: 1.5rem 1rem;
+  max-width: 480px;
+  margin: 0 auto;
 }
 
 h1 {
   color: #0F3376;
-  padding: 2vh 1rem;
-  font-size: 2rem;
+  font-size: 1.8rem;
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+ul {
+  list-style: none;
   margin-bottom: 1rem;
 }
 
-p {
-  font-size: 1.5rem;
-  margin: 1rem auto;
-  max-width: 600px;
+li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: white;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-.button {
-  display: inline-block;
-  background-color: #00A676;
+li input[type="text"] {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 1rem;
+  background: transparent;
+  min-width: 0;
+}
+
+.controls {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.controls button {
+  background: #e8e8e8;
+  border: none;
+  border-radius: 4px;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.controls button:hover {
+  background: #d0d0d0;
+}
+
+.controls button.delete {
+  background: #ffe0e0;
+  color: #c00;
+}
+
+.controls button.delete:hover {
+  background: #f44336;
+  color: white;
+}
+
+.add-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.add-row input[type="text"] {
+  flex: 1;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 1rem;
+  outline: none;
+}
+
+.add-row input[type="text"]:focus {
+  border-color: #0F3376;
+}
+
+.add-row button {
+  padding: 0.6rem 1.1rem;
+  background: #0F3376;
+  color: white;
   border: none;
   border-radius: 6px;
-  color: white;
-  padding: 14px 32px;
-  text-decoration: none;
-  font-size: 1.2rem;
-  margin: 6px 10px;
+  font-size: 1rem;
   cursor: pointer;
-  transition: background-color 0.3s ease, transform 0.1s ease;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-  width: 160px;
 }
 
-.button:hover {
-  background-color: #0077a8;
-  transform: translateY(-1px);
+.add-row button:hover {
+  background: #1a4a9e;
 }
 
-.button2 {
-  background-color: #f44336;
+#save-btn {
+  width: 100%;
+  padding: 0.75rem;
+  background: #00A676;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 1.1rem;
+  cursor: pointer;
 }
 
-.button2:hover {
-  background-color: #d9362c;
+#save-btn:hover {
+  background: #008f64;
 }
 
-.units {
-  font-size: 1.2rem;
-  color: #555;
-  margin-left: 4px;
+#status {
+  text-align: center;
+  margin-top: 0.75rem;
+  font-size: 0.95rem;
+  min-height: 1.4em;
 }
 
-.sensor-labels {
-  font-size: 1.5rem;
-  font-weight: bold;
-  vertical-align: middle;
-  padding-bottom: 15px;
-}
+.success { color: #00A676; }
+.error { color: #e53935; }
