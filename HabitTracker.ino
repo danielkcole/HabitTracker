@@ -1,6 +1,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <time.h>
 
 // =====================
 // VARIABLES
@@ -31,7 +32,10 @@ int lastSelected = -1;
 #define BTN_DOWN   32
 #define BTN_SELECT 27
 #define DEBOUNCE_MS 100
+#define WAKE_PIN_MASK ((1ULL << BTN_UP) | (1ULL << BTN_DOWN) | (1ULL << BTN_SELECT)) // bitmask for EXT1 wakeup — each bit corresponds to a GPIO number, any HIGH pin wakes the device
+#define SLEEP_TIMEOUT_MS (30 * 1000)  // 30 seconds of inactivity before sleep
 
+unsigned long lastInteractionAt = 0;
 const int buttonPins[] = { BTN_UP, BTN_DOWN, BTN_SELECT };
 const int buttonCount = sizeof(buttonPins) / sizeof(buttonPins[0]);
 
@@ -42,7 +46,7 @@ unsigned long lastDebounceTime[3] = { 0, 0, 0 };
 // ---------------------
 // Data
 // ---------------------
-#define RESET_AFTER_MS (15UL * 60 * 60 * 1000)  // 15 hours in milliseconds
+#define RESET_AFTER_SEC (15UL * 60 * 60)  // 15 hours in seconds
 
 struct Habit {
   const char* name;
@@ -54,16 +58,17 @@ struct AppState {
   int habitCount;
   int selected;
   bool dirty;
-  unsigned long firstDoneAt;  // millis() when first habit was marked done; 0 = not started
+  time_t firstDoneAt;  // RTC timestamp when first habit was marked done; 0 = not started
+  bool initialized;           // false on first boot, true after — survives deep sleep
 };
 
-Habit habits[] = {
+RTC_DATA_ATTR Habit habits[] = {
   {"Take Antidepressant", false},
   {"Take Vitamin D", false},
   {"Take Multivitamin", false},
   {"Nose Spray", false}
 };
-AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 0, true, 0 };
+RTC_DATA_ATTR AppState state = { habits, sizeof(habits) / sizeof(habits[0]), 0, true, 0, false };
 
 // =====================
 // METHODS
@@ -79,18 +84,26 @@ void setup() {
     for (;;);
   }
 
-  delay(2000);
+  if (!state.initialized) {
+    delay(2000);  // give the display time to stabilize on first boot
+    Serial.println("SSD1306 initialized successfully");
+    state.initialized = true;
+  }
 
-  Serial.println("SSD1306 initialized successfully");
+  state.dirty = true;  // force full redraw on both first boot and wake
   setupDisplay();
+  lastInteractionAt = millis();
 }
 
 void loop() {
   handleInput(readButtons());
 
   // auto-reset 15 hours after first habit is marked done
-  if (state.firstDoneAt != 0 && (millis() - state.firstDoneAt) >= RESET_AFTER_MS)
+  if (state.firstDoneAt != 0 && (time(nullptr) - state.firstDoneAt) >= RESET_AFTER_SEC)
     resetHabits();
+
+  if (millis() - lastInteractionAt >= SLEEP_TIMEOUT_MS)
+    goToSleep();
 
   draw();
 }
@@ -139,11 +152,19 @@ void handleInput(int buttonIndex) {
     state.habits[state.selected].done = !wasDone;
     // start the reset timer on the first habit marked done
     if (!wasDone && state.firstDoneAt == 0)
-      state.firstDoneAt = millis();
+      state.firstDoneAt = time(nullptr);
   }
 
-  if (buttonIndex != -1)
+  if (buttonIndex != -1) {
     state.dirty = true;
+    lastInteractionAt = millis();
+  }
+}
+
+void goToSleep() {
+  display.ssd1306_command(SSD1306_DISPLAYOFF);
+  esp_sleep_enable_ext1_wakeup(WAKE_PIN_MASK, ESP_EXT1_WAKEUP_ANY_HIGH);
+  esp_deep_sleep_start();
 }
 
 // ---------------------
